@@ -100,7 +100,7 @@ DEFAULTS = {
         "energy_tools": None,   # null = every tool gets the energy flag
     },
     "sender": {
-        "ws_url": "wss://8787-34255b7eef89.replicas.dev/ws",
+        "ws_url": "wss://8787-f3f85f6360e0.replicas.dev/ws",
         "role": "hardware", "name": "box-tracker",
         "udp": None,          # e.g. "192.168.1.20:9870" for a LAN instance
         "http": None,         # e.g. "http://192.168.1.20:8787/api/events"

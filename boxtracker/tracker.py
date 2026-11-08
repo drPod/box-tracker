@@ -41,6 +41,7 @@ class ToolTracker:
         self.band1_to_jaw = st["band1_from_top"] - st["jaw_from_top"]
         self.prev = None
         self.win = None
+        self.labels = None
         self.last_seen = 0.0
         self.pose = None          # last sent pose dict
         self.status = "no calibration"
@@ -52,8 +53,11 @@ class ToolTracker:
             xy = cfg["lid"]["points"][tool["hole"]]
             self.pivot_lid = np.array([xy[0], xy[1], cfg["lid"]["pivot_z"]])
             self.solver = StickSolver(cam, self.pivot_lid, self.spacing,
-                                      cfg["tracking"]["max_tilt_deg"])
+                                      cfg["tracking"]["max_tilt_deg"], max_s=self.tip_to_band2)
             self.pivot_px = cam.project(self.pivot_lid)[0]
+            # Usual outward stick direction: opposite the trocar's nominal inward axis.
+            _, d_sim, _, _ = port_frame(self.port)
+            self.prior = cam.R @ unit(-(self.R_box2sim.T @ d_sim))
             self.ppm = cam.lid_pixels_per_metre(self.pivot_lid)
             self.roi = self._roi()
             self.status = "searching"
@@ -95,15 +99,24 @@ class ToolTracker:
             return [], None
         mask = colour_mask(hsv[y0:y1, x0:x1], hsv_spec(self.tool))
         mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, np.ones((3, 3), np.uint8))
-        n, _, stats, cents = cv2.connectedComponentsWithStats(mask, connectivity=8)
+        n, self.labels, stats, cents = cv2.connectedComponentsWithStats(mask, connectivity=8)
         out = []
         amin = self.min_area()
         for i in range(1, n):
             a = stats[i, cv2.CC_STAT_AREA]
             if a >= amin:
-                out.append((cents[i][0] + x0, cents[i][1] + y0, int(a)))
+                out.append((cents[i][0] + x0, cents[i][1] + y0, int(a), i))
         out.sort(key=lambda b: -b[2])
         return out[:6], mask
+
+    def lower_edge(self, blob, d):
+        """Point where the band ends on the pivot side. Fingers only ever cover a band from
+        the top, so this end is more stable than the centroid."""
+        x0, y0 = self.win[0], self.win[1]
+        ys, xs = np.nonzero(self.labels == blob[3])
+        c = np.array(blob[:2])
+        proj = (xs + x0 - c[0]) * d[0] + (ys + y0 - c[1]) * d[1]
+        return c + d * np.percentile(proj, 3)
 
     def _project_band(self, v_cam, s):
         X = self.solver.P + s * v_cam
@@ -163,7 +176,7 @@ class ToolTracker:
         tried = 0
         for b2, b1 in self._pick(blobs):
             tried += 1
-            res = self.solver.solve(b2[:2], b1[:2], self.prev, accept_px=0.5 * maxr)
+            res = self.solver.solve(b2[:2], b1[:2], self.prev, accept_px=0.5 * maxr, prior=self.prior)
             if res is None:
                 continue
             v, s, rms = res
@@ -184,6 +197,20 @@ class ToolTracker:
             return self.pose
 
         v, s, rms, b2, b1 = sol
+        # Refine on the lower band edges (both 5 cm apart as well, half a band below the centres).
+        d = np.array(b1[:2]) - np.array(b2[:2])
+        if np.linalg.norm(d) > 4:
+            d = d / np.linalg.norm(d)
+            e2, e1 = self.lower_edge(b2, d), self.lower_edge(b1, d)
+            hb = self.tool["stick"]["band_height"] / 2
+            res = self.solver.solve(e2, e1, (v, max(0.0, s - hb)), accept_px=maxr)
+            if res is not None and res[2] <= maxr:
+                # Direction from the edges; distance from band 2's centre (band 2 is the one
+                # next to the lid, away from the fingers), which has no edge-overshoot bias.
+                v = res[0]
+                s = self.solver.distance_along(v, b2[:2], fallback=res[1] + hb)
+                rms = res[2]
+                self.dbg.update(e2=e2, e1=e1)
         self.prev = (v, s)
         self.last_seen = t
         self.status = "tracking"

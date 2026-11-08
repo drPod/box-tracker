@@ -89,8 +89,10 @@ class StickSolver:
     Minimises reprojection error of both band centres with a tiny Levenberg-Marquardt.
     """
 
-    def __init__(self, cam, pivot_lid, spacing, max_tilt_deg=75):
+    def __init__(self, cam, pivot_lid, spacing, max_tilt_deg=75, max_s=None):
         self.cam = cam
+        # Band 2 can't be farther from the pivot than when the tip sits in the hole.
+        self.max_s = max_s
         self.P = cam.to_cam(pivot_lid)
         self.z_lid = cam.R[:, 2]          # lid normal (up) in camera coords
         self.L = spacing
@@ -143,33 +145,109 @@ class StickSolver:
                 break
         return v, s, cost
 
-    def solve(self, px2, px1, prev=None, accept_px=2.0):
-        """px2/px1: pixel centres of band2 (lower) and band1. Returns (v_cam, s, rms_px)."""
+    def candidates(self, n2, n1):
+        """All (v, s) consistent with the two band rays, found in the plane they span.
+
+        The stick line, the two band rays and the camera centre are coplanar, so within that
+        plane the problem is 1-D: rotate a line about the (projected) pivot until the band
+        rays cut it exactly `L` apart. There are usually two roots: the stick leaning towards
+        or away from the camera.
+        """
+        a2 = unit(np.array([n2[0], n2[1], 1.0]))
+        a1 = unit(np.array([n1[0], n1[1], 1.0]))
+        N = cross(a2, a1)
+        if np.linalg.norm(N) < 1e-9:
+            return []
+        N = unit(N)
+        e1 = a2
+        e2 = cross(N, e1)
+        P = self.P - (self.P @ N) * N
+        p = np.array([P @ e1, P @ e2])
+        r2 = np.array([1.0, 0.0])
+        r1 = np.array([a1 @ e1, a1 @ e2])
+
+        def hit(ray, w):
+            # t * ray = p + s * w  ->  [ray, -w] [t, s]^T = p
+            det = -ray[0] * w[1] + ray[1] * w[0]
+            if abs(det) < 1e-12:
+                return None, None
+            t = (-p[0] * w[1] + p[1] * w[0]) / det
+            s = (ray[0] * p[1] - ray[1] * p[0]) / det
+            return t, s
+
+        def f(phi):
+            w = np.array([math.cos(phi), math.sin(phi)])
+            t2, s2 = hit(r2, w)
+            t1, s1 = hit(r1, w)
+            if t2 is None or t1 is None or t2 <= 0 or t1 <= 0:
+                return None, None
+            return (s1 - s2) - self.L, s2
+
+        out = []
+        phis = np.linspace(0, 2 * math.pi, 361)
+        prev_val = None
+        for k, phi in enumerate(phis):
+            val, s2 = f(phi)
+            if val is not None and prev_val is not None and (val > 0) != (prev_val > 0) \
+                    and abs(val - prev_val) < 4 * self.L:
+                lo, hi, flo = phis[k - 1], phi, prev_val
+                for _ in range(40):
+                    mid = 0.5 * (lo + hi)
+                    fm, _ = f(mid)
+                    if fm is None:
+                        break
+                    if (fm > 0) == (flo > 0):
+                        lo, flo = mid, fm
+                    else:
+                        hi = mid
+                phi_r = 0.5 * (lo + hi)
+                _, s2 = f(phi_r)
+                if s2 is not None and s2 > -0.01 and (self.max_s is None or s2 <= self.max_s + 0.01):
+                    w = math.cos(phi_r) * e1 + math.sin(phi_r) * e2
+                    if w @ self.z_lid >= self.min_up:
+                        out.append((unit(w), max(0.0, s2)))
+            prev_val = val
+        return out
+
+    def solve(self, px2, px1, prev=None, accept_px=2.0, prior=None):
+        """px2/px1: pixel centres of band2 (lower) and band1. Returns (v_cam, s, rms_px).
+
+        With two mirror-image solutions, keep the one closest to the previous direction, or
+        (when starting) closest to `prior`, the port's usual outward direction (camera coords).
+        """
         n = self.cam.normalize(np.array([px2, px1]))
         n2, n1 = n[0], n[1]
-        inits = []
         if prev is not None:
-            inits.append(prev)
-        z = self.z_lid
-        x = self.cam.R[:, 0]
-        y = self.cam.R[:, 1]
-        for tilt in (0.0, 0.5):
-            for az in ((0,) if tilt == 0 else (0, math.pi / 2, math.pi, 3 * math.pi / 2)):
-                v0 = unit(z * math.cos(tilt) + math.sin(tilt) * (x * math.cos(az) + y * math.sin(az)))
-                inits.append((v0, 0.06))
-        best = None
-        for i, (v0, s0) in enumerate(inits):
-            v, s, cost = self._lm(np.asarray(v0, float), float(s0), n2, n1)
-            if v @ z < self.min_up:
-                continue
-            if best is None or cost < best[2]:
-                best = (v, s, cost)
-            if i == 0 and prev is not None and cost < 4 * accept_px ** 2:   # warm start is enough
-                break
-        if best is None:
+            v, s, cost = self._lm(np.asarray(prev[0], float), float(prev[1]), n2, n1, iters=6)
+            if cost < 4 * accept_px ** 2 and v @ self.z_lid >= self.min_up \
+                    and (self.max_s is None or s <= self.max_s + 0.015):
+                return v, s, math.sqrt(cost / 4)
+        cands = []
+        for v0, s0 in self.candidates(n2, n1):
+            v, s, cost = self._lm(v0, s0, n2, n1, iters=6)
+            if v @ self.z_lid >= self.min_up and (self.max_s is None or s <= self.max_s + 0.015):
+                cands.append((v, s, cost))
+        if not cands:
             return None
-        v, s, cost = best
+        ref = prev[0] if prev is not None else prior
+        if ref is not None and len(cands) > 1:
+            best_cost = min(c[2] for c in cands)
+            ok = [c for c in cands if c[2] <= max(4 * accept_px ** 2, 4 * best_cost)]
+            v, s, cost = max(ok, key=lambda c: c[0] @ ref)
+        else:
+            v, s, cost = min(cands, key=lambda c: c[2])
         return v, s, math.sqrt(cost / 4)
+
+    def distance_along(self, v, px, fallback):
+        """Distance from the pivot along v to the point nearest the pixel's viewing ray."""
+        n = self.cam.normalize(np.array([px]))[0]
+        a = unit(np.array([n[0], n[1], 1.0]))
+        A = np.stack([v, -a], axis=1)
+        sol, *_ = np.linalg.lstsq(A, -self.P, rcond=None)
+        s = float(sol[0])
+        if not (0.0 <= s <= (self.max_s or 1.0) + 0.015) or sol[1] <= 0:
+            return fallback
+        return s
 
     def lid_direction(self, v_cam):
         return self.cam.R.T @ v_cam

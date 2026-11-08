@@ -91,26 +91,45 @@ Measure positions on the **underside of the lid** using the same centre cross, t
 
 ### The camera
 
-12. **Place the camera on the far side of the box** (opposite you), looking down at the lid from
-    about **45 cm above the lid**, set back about **15 to 20 cm** past the far edge. Tape the camera
-    board flat against a mug sitting on a stack of books, or tape it to the end of a ruler that
-    sticks out from the top of a book stack. The Pi sits on the books next to it.
-    Point it so the **whole lid fills most of the picture** and the sticks stand up against the
-    white lid, not against the room. The debug page (step 14) shows what it sees.
-13. Light: room lights on, no direct sun on the box, no strong shadow across the lid.
+12. **Put the camera directly above the lid centre, looking straight down**, with the lens about
+    **50 cm above the lid** (45 to 60 cm is fine). Turn it so the ribbon cable points towards you
+    (the near edge); then the picture shows the lid the way you see it. Household mounts, pick one:
+    - a broom handle or a long ruler laid across two stacks of books or two chair backs, one on
+      each side of the box, with the camera taped underneath it, facing down;
+    - taped under a shelf or kitchen cabinet with the box underneath;
+    - taped to the end of a wooden spoon or ruler that sticks out over the box from a tall stack
+      of books, with a heavy book on the other end.
+    The Pi can lie on the books or the broom next to it. The whole lid should be in the picture,
+    with a few cm of margin. Overhead is better than from the side: no stick ever points straight
+    at the lens, and the room (and you) stay out of the picture.
+13. Light: room lights on, no direct sun, no hard shadow across the lid. Avoid a bright lamp right
+    next to the camera shining onto the sticks.
 
-### Calibrate (5 minutes, guided on screen)
+### Calibrate (about 5 minutes, guided on screen)
 
-14. On a laptop or phone on the same network, open **http://<pi-address>:8080** (the debug page).
-    On the Pi, run `boxtracker calibrate` (or press **Calibrate** on the page) and follow the steps:
-    1. *Focus*: hold still, press **Focus**.
-    2. *Lens (optional)*: open `http://<pi-address>:8080/checker` on a phone, set brightness to full,
-       and slowly wave the phone around in front of the camera until the counter reaches 15.
-       You can skip this, the built-in lens values are good enough to start.
-    3. *Lid*: click the **U, R, L, A** marks on the camera picture, in that order.
-    4. *Colours*: put all 3 sticks in their holes, then click band 1 and band 2 of the
-       **blue**, **green**, then **red** stick.
-    5. *Jaw*: hold each stick with your thumb off, press **Open**, then thumb on, press **Closed**.
-15. Done. The tracker now streams to the simulator by itself, and also every time the Pi boots.
-    Cautery: press **F** on the Pi's keyboard (put it on the floor and press with your foot) or on
-    the debug page.
+14. The tracker starts by itself when the Pi boots. On a laptop or phone on the same Wi-Fi, open
+    **http://192.168.1.202:8080/** (or **http://100.90.206.75:8080/** over Tailscale). You see the
+    camera picture. Press **Calibrate** and follow the prompts in the box on the right. You click on
+    the camera picture when asked. (Same thing in a terminal on the Pi: `cd ~/box-tracker &&
+    ~/boxtracker-venv/bin/python -m boxtracker calibrate`.)
+    1. **Focus**: lid in view, nothing moving, press **Focus**. This locks focus, brightness and colour.
+    2. **Lens** (optional): press **Start**, open **http://192.168.1.202:8080/checker** on a phone at
+       full brightness, and slowly move and tilt it around under the camera at about lid height until
+       the counter reaches 15. Or press **Skip**; the built-in lens values are fine to start with.
+    3. **Lid**: click the black **U** dot, then the centres of holes **R**, **L** and **A**, in that order.
+       Then press **Next**.
+    4. **Colours**: put all 3 sticks in their holes, standing up. Click band 1 (upper) and then band 2
+       (lower) of the **blue**, the **green**, then the **red** stick. Press **Next**.
+    5. **Wiggle**: slowly circle each stick around its hole (fingers off the bands) until all three
+       show 100%, then press **Next**. This pins down exactly where each hole is.
+    6. **Jaw**: for each stick, hold it like a syringe with the thumb **off** the top and press
+       **Open**. Then with the thumb **on** the top press **Closed**. Press **Finish**.
+    In the **Sticks** box, type each stick's real length if it is not 30 cm.
+15. Done. The tracker now streams to the simulator by itself, every time the Pi boots. The table on
+    the page shows each stick's angles, depth and jaw state, and the top bar shows fps and the send rate.
+    - **Cautery**: hold **F** on the keyboard plugged into the Pi (put it on the floor and press it with
+      your foot), or on the debug page.
+    - **Jaws by keyboard** (if the thumb trick is unreliable): hold **Z** (left-hand stick),
+      **M** (right-hand stick), **X** (assistant stick) or **Space** (all).
+    - If a stick shows **lost**: check that both of its bands are visible and not covered by fingers.
+      If colours drift (daylight changes), press **Redo colours**.

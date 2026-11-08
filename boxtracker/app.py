@@ -109,7 +109,6 @@ class Wizard:
 
     def goto(self, step):
         self.step = step
-        self.msg = ""
         if step == "done":
             self.finish()
 
@@ -124,6 +123,8 @@ class Wizard:
     def command(self, d):
         cmd = d.get("cmd")
         cfg = self.cfg
+        if cmd != "click":
+            self.msg = ""
         if cmd == "focus":
             s = self.app.source.autofocus_and_lock()
             cfg["camera"].update({k: s[k] for k in ("lens_position", "exposure_us", "gain", "colour_gains")})
@@ -418,6 +419,7 @@ class App:
                 "tilt_deg": None if d.get("tilt_deg") is None else round(d["tilt_deg"], 1),
                 "jaw_score": None if d.get("jaw_score") is None else round(d["jaw_score"], 2),
                 "jaw_open": tt.jaw_open, "blobs": len(d.get("blobs", [])),
+                "bands_px": [[round(float(c), 1) for c in d[k]] for k in ("b1", "b2") if k in d],
                 "stick_length_cm": round(tt.tool["stick"]["length"] * 100, 1),
                 "jaw_open_score": tt.tool.get("jaw_open_score"),
                 "jaw_closed_score": tt.tool.get("jaw_closed_score"),

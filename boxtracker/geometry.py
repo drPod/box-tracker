@@ -9,6 +9,11 @@ def unit(v):
     return v / np.linalg.norm(v)
 
 
+def cross(a, b):
+    # np.cross is slow for single 3-vectors
+    return np.array([a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]])
+
+
 def port_frame(port):
     """Nominal trocar axes, exactly as the sim's tools.js `Tl()` builds them."""
     o = np.asarray(port["pos"], float)
@@ -105,11 +110,11 @@ class StickSolver:
         cost = r @ r
         for _ in range(iters):
             # local tangent basis around v
-            a = np.cross(v, [1.0, 0, 0])
+            a = cross(v, (1.0, 0.0, 0.0))
             if np.linalg.norm(a) < 0.1:
-                a = np.cross(v, [0, 1.0, 0])
+                a = cross(v, (0.0, 1.0, 0.0))
             a = unit(a)
-            b = np.cross(v, a)
+            b = cross(v, a)
 
             def f(x):
                 return self.residual(unit(v + x[0] * a + x[1] * b), s + x[2], n2, n1)
@@ -138,7 +143,7 @@ class StickSolver:
                 break
         return v, s, cost
 
-    def solve(self, px2, px1, prev=None):
+    def solve(self, px2, px1, prev=None, accept_px=2.0):
         """px2/px1: pixel centres of band2 (lower) and band1. Returns (v_cam, s, rms_px)."""
         n = self.cam.normalize(np.array([px2, px1]))
         n2, n1 = n[0], n[1]
@@ -159,7 +164,7 @@ class StickSolver:
                 continue
             if best is None or cost < best[2]:
                 best = (v, s, cost)
-            if i == 0 and prev is not None and cost < 4 * 1.0:   # warm start good enough
+            if i == 0 and prev is not None and cost < 4 * accept_px ** 2:   # warm start is enough
                 break
         if best is None:
             return None

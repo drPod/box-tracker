@@ -40,6 +40,7 @@ class ToolTracker:
         self.tip_to_band2 = st["length"] - st["band2_from_top"]
         self.band1_to_jaw = st["band1_from_top"] - st["jaw_from_top"]
         self.prev = None
+        self.win = None
         self.last_seen = 0.0
         self.pose = None          # last sent pose dict
         self.status = "no calibration"
@@ -75,8 +76,21 @@ class ToolTracker:
         base = self.cfg["tracking"]["min_band_area"]
         return max(base, 0.2 * a) if a else base
 
+    def search_window(self):
+        """Full ROI while searching; a tight box around the predicted bands while tracking."""
+        if self.prev is None:
+            return self.roi
+        v, s = self.prev
+        pts = np.array([self._project_band(v, s), self._project_band(v, s + self.spacing),
+                        self._project_band(v, s + self.spacing + self.band1_to_jaw)])
+        m = max(30.0, 0.05 * self.ppm)
+        x0, y0 = pts.min(0) - m
+        x1, y1 = pts.max(0) + m
+        rx0, ry0, rx1, ry1 = self.roi
+        return (int(max(rx0, x0)), int(max(ry0, y0)), int(min(rx1, x1)), int(min(ry1, y1)))
+
     def blobs(self, hsv):
-        x0, y0, x1, y1 = self.roi
+        x0, y0, x1, y1 = self.win = self.search_window()
         if x1 - x0 < 4 or y1 - y0 < 4:
             return [], None
         mask = colour_mask(hsv[y0:y1, x0:x1], hsv_spec(self.tool))
@@ -93,18 +107,19 @@ class ToolTracker:
 
     def _project_band(self, v_cam, s):
         X = self.solver.P + s * v_cam
-        x = X[:2] / X[2]
         pts, _ = cv2.projectPoints(X.reshape(1, 3), np.zeros(3), np.zeros(3), self.cam.K, self.cam.dist)
         return pts.reshape(2)
 
     def jaw_score(self, mask, v_cam, s):
         st = self.tool["stick"]
+        if mask is None:
+            return 0.0, None, 0
         dist = s + self.spacing + self.band1_to_jaw
         X = self.solver.P + dist * v_cam
         pts, _ = cv2.projectPoints(X.reshape(1, 3), np.zeros(3), np.zeros(3), self.cam.K, self.cam.dist)
         c = pts.reshape(2)
         r = max(3.0, 0.6 * st["band_height"] * self.cam.K[0, 0] / max(X[2], 0.05))
-        x0, y0 = self.roi[0], self.roi[1]
+        x0, y0 = self.win[0], self.win[1]
         cx, cy = c[0] - x0, c[1] - y0
         h, w = mask.shape
         xa, xb = int(max(0, cx - r)), int(min(w, cx + r + 1))
@@ -148,7 +163,7 @@ class ToolTracker:
         tried = 0
         for b2, b1 in self._pick(blobs):
             tried += 1
-            res = self.solver.solve(b2[:2], b1[:2], self.prev)
+            res = self.solver.solve(b2[:2], b1[:2], self.prev, accept_px=0.5 * maxr)
             if res is None:
                 continue
             v, s, rms = res
